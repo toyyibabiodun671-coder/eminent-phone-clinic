@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentProfile } from '@/lib/auth/get-profile'
 import Link from 'next/link'
+import { SalesGoalBar, TopTechnician, AnimatedCounter } from './gamification'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,6 +31,14 @@ type RepairCostRow = {
   amount_paid: number | string | null
 }
 
+type RepairTechRow = {
+  technician_id: string | null
+  assigned_to: string | null
+  created_by: string | null
+  status: string | null
+  created_at: string
+}
+
 export default async function DashboardPage() {
   const rawProfile = await getCurrentProfile()
   const profile = rawProfile as unknown as ProfileRow
@@ -57,6 +66,13 @@ export default async function DashboardPage() {
   const displayDate = new Intl.DateTimeFormat('en-NG', { timeZone: 'Africa/Lagos', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())
   const startOfDay = `${todayLagos}T00:00:00+01:00`
   const endOfDay = `${todayLagos}T23:59:59+01:00`
+
+  // Start of this week for Top Technician (Monday)
+  const now = new Date()
+  const day = now.getDay() === 0 ? 7 : now.getDay()
+  const monday = new Date(now)
+  monday.setDate(now.getDate() - (day - 1))
+  monday.setHours(0, 0, 0, 0)
 
   let totalSales = 0
   let cash = 0
@@ -90,6 +106,30 @@ export default async function DashboardPage() {
     outstandingBalance = openRepairs.reduce((sum, r) => sum + (Number(r.repair_cost || 0) - Number(r.amount_paid || 0)), 0)
   }
 
+  // --- REAL TOP TECHNICIAN FROM repair_jobs ---
+  const { data: weekRepairs } = await supabase
+    .from('repair_jobs')
+    .select('technician_id, assigned_to, created_by, status, created_at')
+    .gte('created_at', monday.toISOString())
+  const weekRows = (weekRepairs as RepairTechRow[] | null) || []
+
+  const { data: profilesData } = await supabase.from('profiles').select('id, full_name')
+  const nameById = new Map((profilesData || []).map((p: { id: string; full_name: string | null }) => [p.id, p.full_name || 'Staff']))
+
+  const counts = new Map<string, number>()
+  for (const r of weekRows) {
+    const techId = r.technician_id || r.assigned_to || r.created_by
+    if (!techId) continue
+    counts.set(techId, (counts.get(techId) || 0) + 1)
+  }
+  const topTechs = Array.from(counts.entries())
+    .map(([id, repairs]) => ({ name: nameById.get(id) || 'Staff', repairs, sales: 0 }))
+    .sort((a, b) => b.repairs - a.repairs)
+    .slice(0, 3)
+
+  // Fallback if no repairs this week yet - show all staff with 0 so card still shows
+  const finalTechs = topTechs.length > 0 ? topTechs : (profilesData || []).slice(0, 3).map((p: { full_name: string | null }) => ({ name: p.full_name || 'Staff', repairs: 0, sales: 0 }))
+
   const cardClass = "rounded-2xl border border-blue-200 bg-white p-5 shadow-sm transition-all duration-200 hover:shadow-md hover:border-blue-300 hover:bg-[#EFF6FF]/50"
 
   return (
@@ -104,14 +144,22 @@ export default async function DashboardPage() {
         </div>
       </div>
 
+      {/* GAMIFICATION — TOP */}
+      {isAdmin && (
+        <div className="mt-6 grid gap-4 md:grid-cols-2">
+          <SalesGoalBar todaySales={totalSales} goal={100000} />
+          <TopTechnician techs={finalTechs} />
+        </div>
+      )}
+
       {/* FINANCIAL TOP LEVEL — MOVED TO TOP */}
       {isAdmin && (
         <>
           <div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-            <div className={cardClass}><p className="text-xs font-semibold uppercase text-[#2563EB]">Today&apos;s Sales</p><p className="mt-2 text-2xl font-bold text-[#1E3A8A]">₦{totalSales.toLocaleString()}</p><p className="mt-1 text-xs leading-tight text-blue-500">Repair ₦{repairPayments.toLocaleString()} • Acc ₦{accessoryRevenue.toLocaleString()} • Other ₦{otherSales.toLocaleString()}</p></div>
-            <div className={cardClass}><p className="text-xs font-semibold uppercase text-[#2563EB]">Accessories Today</p><p className="mt-2 text-2xl font-bold text-[#1E3A8A]">₦{accessoryRevenue.toLocaleString()}</p><p className="mt-1 text-xs text-blue-400">{todayTxData.filter(s => s.transaction_type === 'accessory' || s.transaction_type === 'accessory_sale').length} sales</p></div>
+            <div className={cardClass}><p className="text-xs font-semibold uppercase text-[#2563EB]">Today&apos;s Sales</p><p className="mt-2 text-2xl font-bold text-[#1E3A8A]"><AnimatedCounter value={totalSales} /></p><p className="mt-1 text-xs leading-tight text-blue-500">Repair ₦{repairPayments.toLocaleString()} • Acc ₦{accessoryRevenue.toLocaleString()} • Other ₦{otherSales.toLocaleString()}</p></div>
+            <div className={cardClass}><p className="text-xs font-semibold uppercase text-[#2563EB]">Accessories Today</p><p className="mt-2 text-2xl font-bold text-[#1E3A8A]"><AnimatedCounter value={accessoryRevenue} /></p><p className="mt-1 text-xs text-blue-400">{todayTxData.filter(s => s.transaction_type === 'accessory' || s.transaction_type === 'accessory_sale').length} sales</p></div>
             <div className={cardClass}><p className="text-xs font-semibold uppercase text-[#2563EB]">Repairs</p><p className="mt-2 text-2xl font-bold text-[#1E3A8A]">{totalRepairs ?? 0}</p><p className="mt-1 text-xs text-blue-400">Completed {collected ?? 0} • Diagnosing {diagnosing ?? 0}</p></div>
-            <div className={cardClass}><p className="text-xs font-semibold uppercase text-[#2563EB]">Outstanding Balance</p><p className="mt-2 text-2xl font-bold text-amber-600">₦{outstandingBalance.toLocaleString()}</p><p className="mt-1 text-xs text-blue-400">Customer balance</p></div>
+            <div className={cardClass}><p className="text-xs font-semibold uppercase text-[#2563EB]">Outstanding Balance</p><p className="mt-2 text-2xl font-bold text-amber-600"><AnimatedCounter value={outstandingBalance} /></p><p className="mt-1 text-xs text-blue-400">Customer balance</p></div>
           </div>
 
           <div className="mt-6 grid grid-cols-3 gap-4">
