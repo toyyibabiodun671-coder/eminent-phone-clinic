@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentProfile } from '@/lib/auth/get-profile'
 import StatusControl from '@/components/repairs/status-control'
+import WhatsAppButton from '@/components/WhatsAppButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -89,8 +90,8 @@ export default async function RepairDetailsPage({ params }: { params: Promise<{ 
   const amountPaid = paymentList.reduce((sum, p) => sum + Number(p.amount), 0)
   const outstanding = Math.max(repairCost - amountPaid, 0)
 
-  // 2-role logic: admin group = admin/manager/owner can update all, apprentice group = technician/sales/apprentice can update own only
   const canUpdateStatus = isAdmin || repair.technician_id === profile.id
+  const deviceLabel = `${device?.brand || ''} ${device?.model || ''}`.trim() || 'Device'
 
   return (
     <div className="mx-auto max-w-5xl p-6">
@@ -108,6 +109,25 @@ export default async function RepairDetailsPage({ params }: { params: Promise<{ 
           </Link>
         </div>
       </div>
+
+      {/* WHATSAPP — NEW */}
+      {customer?.phone && (
+        <div className="mt-5 flex flex-wrap gap-3">
+          <WhatsAppButton
+            customerName={customer.full_name || 'Customer'}
+            customerPhone={customer.phone}
+            device={deviceLabel}
+            repairCost={repairCost}
+            balance={outstanding}
+            status={repair.status}
+          />
+          {repair.status !== 'ready' && (
+            <span className="inline-flex items-center rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs font-medium text-amber-700">
+              Status: {repair.status} — When you mark as Ready, button changes to &quot;Ready for Pickup&quot;
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         <section className="rounded-2xl border border-blue-200 bg-[#EFF6FF] p-6 shadow-sm">
